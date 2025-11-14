@@ -11,7 +11,7 @@ jobs:
     # Only repos with write access can send dispatch events
     # This prevents secret exposure from malicious PRs
     permissions:
-      contents: read
+      contents: write
       packages: write
     
     steps:
@@ -94,6 +94,38 @@ jobs:
             echo "✅ Deployed $DOMAIN"
           EOF
       
+      - name: Update registry for production
+        if: github.event.action == 'deploy-prod'
+        run: |
+          REPO_NAME=$(echo "${{ github.event.client_payload.repository }}" | cut -d'/' -f2)
+          DOMAIN="${{ github.event.client_payload.domain }}"
+          
+          # Checkout deployments repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Update registry.json
+          jq ".deployments[\"$REPO_NAME\"] = {
+            domain: \"$DOMAIN\",
+            subdomain: \"${{ github.event.client_payload.subdomain }}\",
+            base_domain: \"${{ github.event.client_payload.base_domain }}\",
+            image: \"${{ github.event.client_payload.image }}\",
+            deployed_at: \"$(date -Iseconds)\",
+            commit: \"${{ github.event.client_payload.ref }}\"
+          }" registry.json > registry.json.tmp && mv registry.json.tmp registry.json
+          
+          git add registry.json
+          git commit -m "Deploy $REPO_NAME @ ${{ github.event.client_payload.ref }}"
+          git push
+          
+          # Update GitHub topics on app repo
+          gh api repos/${{ github.event.client_payload.repository }} --method PUT \
+            -f topics[]=deployed \
+            -f topics[]=env-prod \
+            -f topics[]=domain-${DOMAIN//./-}
+        env:
+          GH_TOKEN: ${{ secrets.CHECKOUT_TOKEN }}
+      
       - name: Deploy Preview
         if: github.event.action == 'deploy-preview'
         env:
@@ -145,6 +177,39 @@ jobs:
             echo "✅ Deployed preview at $DOMAIN"
           EOF
       
+      - name: Update registry for preview
+        if: github.event.action == 'deploy-preview'
+        run: |
+          APP_NAME="${{ github.event.client_payload.app_name }}"
+          DOMAIN="${{ github.event.client_payload.domain }}"
+          
+          # Checkout deployments repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Update registry.json
+          jq ".preview_deployments[\"$APP_NAME\"] = {
+            domain: \"$DOMAIN\",
+            pr_number: ${{ github.event.client_payload.pr_number }},
+            base_domain: \"${{ github.event.client_payload.base_domain }}\",
+            subdomain: \"${{ github.event.client_payload.subdomain }}\",
+            image: \"${{ github.event.client_payload.image }}\",
+            deployed_at: \"$(date -Iseconds)\",
+            pr_url: \"${{ github.event.client_payload.pr_url }}\"
+          }" registry.json > registry.json.tmp && mv registry.json.tmp registry.json
+          
+          git add registry.json
+          git commit -m "Preview $APP_NAME"
+          git push
+          
+          # Update GitHub topics on app repo
+          gh api repos/${{ github.event.client_payload.repository }} --method PUT \
+            -f topics[]=deployed \
+            -f topics[]=env-preview \
+            -f topics[]=has-preview-pr-${{ github.event.client_payload.pr_number }}
+        env:
+          GH_TOKEN: ${{ secrets.CHECKOUT_TOKEN }}
+      
       - name: Cleanup Preview
         if: github.event.action == 'cleanup-preview'
         env:
@@ -167,3 +232,21 @@ jobs:
               echo "⚠️  No deployment found to clean up"
             fi
           EOF
+      
+      - name: Update registry after cleanup
+        if: github.event.action == 'cleanup-preview'
+        run: |
+          APP_NAME="${{ github.event.client_payload.app_name }}"
+          
+          # Checkout deployments repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Update registry.json
+          jq "del(.preview_deployments[\"$APP_NAME\"])" registry.json > registry.json.tmp && mv registry.json.tmp registry.json
+          
+          git add registry.json
+          git commit -m "Cleanup preview $APP_NAME" || true
+          git push || true
+        env:
+          GH_TOKEN: ${{ secrets.CHECKOUT_TOKEN }}
