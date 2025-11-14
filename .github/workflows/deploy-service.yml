@@ -4,11 +4,40 @@ on:
   repository_dispatch:
     types: [deploy-prod, deploy-preview, cleanup-preview]
 
+env:
+  REGISTRY: ghcr.io
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
     
     steps:
+      - name: Checkout app repository
+        if: github.event.action == 'deploy-prod' || github.event.action == 'deploy-preview'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.client_payload.repository }}
+          ref: ${{ github.event.client_payload.ref }}
+      
+      - name: Log in to GitHub Container Registry
+        if: github.event.action == 'deploy-prod' || github.event.action == 'deploy-preview'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Build and push image
+        if: github.event.action == 'deploy-prod' || github.event.action == 'deploy-preview'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ github.event.client_payload.image }}
+      
       - name: Setup SSH
         env:
           SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
