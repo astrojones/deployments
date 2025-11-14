@@ -7,6 +7,8 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # CRITICAL: repository_dispatch events cannot be triggered from forks
+    # This prevents secret exposure from malicious PRs
     permissions:
       contents: read
     
