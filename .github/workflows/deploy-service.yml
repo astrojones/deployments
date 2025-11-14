@@ -7,10 +7,12 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    # CRITICAL: repository_dispatch events cannot be triggered from forks
+    # SECURITY: repository_dispatch events cannot be triggered from forks
+    # Only repos with write access can send dispatch events
     # This prevents secret exposure from malicious PRs
     permissions:
       contents: read
+      packages: write
     
     steps:
       - name: Checkout app repository
@@ -21,13 +23,8 @@ jobs:
           ref: ${{ github.event.client_payload.ref }}
           token: ${{ secrets.CHECKOUT_TOKEN }}
       
-      - name: Log in to private registry
-        if: github.event.action == 'deploy-prod' || github.event.action == 'deploy-preview'
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ vars.REGISTRY_URL }}
-          username: ${{ secrets.REGISTRY_USERNAME }}
-          password: ${{ secrets.REGISTRY_PASSWORD }}
+      # GitHub automatically authenticates to organization private registries
+      # No explicit login needed - credentials injected via org settings
       
       - name: Build and push image
         if: github.event.action == 'deploy-prod' || github.event.action == 'deploy-preview'
@@ -51,7 +48,7 @@ jobs:
         env:
           SSH_USER: ${{ secrets.SSH_USER }}
           HOST_IP: ${{ vars.HOST_IP }}
-          REGISTRY_URL: ${{ vars.REGISTRY_URL }}
+          REGISTRY_URL: registry.jonaheidsick.de
           REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
           REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
         run: |
@@ -67,7 +64,7 @@ jobs:
             mkdir -p /opt/apps/$APP_NAME
             cd /opt/apps/$APP_NAME
             
-            # Login to registry on host
+            # Login to registry on host for docker compose pull
             echo "$REGISTRY_PASSWORD" | docker login $REGISTRY_URL -u "$REGISTRY_USERNAME" --password-stdin
             
             # Create docker-compose.yml
@@ -102,7 +99,7 @@ jobs:
         env:
           SSH_USER: ${{ secrets.SSH_USER }}
           HOST_IP: ${{ vars.HOST_IP }}
-          REGISTRY_URL: ${{ vars.REGISTRY_URL }}
+          REGISTRY_URL: registry.jonaheidsick.de
           REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
           REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
         run: |
@@ -118,7 +115,7 @@ jobs:
             mkdir -p /opt/apps/$APP_NAME
             cd /opt/apps/$APP_NAME
             
-            # Login to registry on host
+            # Login to registry on host for docker compose pull
             echo "$REGISTRY_PASSWORD" | docker login $REGISTRY_URL -u "$REGISTRY_USERNAME" --password-stdin
             
             # Create docker-compose.yml
