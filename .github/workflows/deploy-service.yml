@@ -4,14 +4,10 @@ on:
   repository_dispatch:
     types: [deploy-prod, deploy-preview, cleanup-preview]
 
-env:
-  REGISTRY: ghcr.io
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
     permissions:
-      packages: write
       contents: read
     
     steps:
@@ -21,14 +17,15 @@ jobs:
         with:
           repository: ${{ github.event.client_payload.repository }}
           ref: ${{ github.event.client_payload.ref }}
+          token: ${{ secrets.CHECKOUT_TOKEN }}
       
-      - name: Log in to GitHub Container Registry
+      - name: Log in to private registry
         if: github.event.action == 'deploy-prod' || github.event.action == 'deploy-preview'
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          registry: ${{ vars.REGISTRY_URL }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
       
       - name: Build and push image
         if: github.event.action == 'deploy-prod' || github.event.action == 'deploy-preview'
@@ -52,6 +49,9 @@ jobs:
         env:
           SSH_USER: ${{ secrets.SSH_USER }}
           HOST_IP: ${{ vars.HOST_IP }}
+          REGISTRY_URL: ${{ vars.REGISTRY_URL }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
         run: |
           APP_NAME="${{ github.event.client_payload.app_name }}"
           DOMAIN="${{ github.event.client_payload.domain }}"
@@ -64,6 +64,9 @@ jobs:
             set -e
             mkdir -p /opt/apps/$APP_NAME
             cd /opt/apps/$APP_NAME
+            
+            # Login to registry on host
+            echo "$REGISTRY_PASSWORD" | docker login $REGISTRY_URL -u "$REGISTRY_USERNAME" --password-stdin
             
             # Create docker-compose.yml
             cat > docker-compose.yml << 'COMPOSE'
@@ -97,6 +100,9 @@ jobs:
         env:
           SSH_USER: ${{ secrets.SSH_USER }}
           HOST_IP: ${{ vars.HOST_IP }}
+          REGISTRY_URL: ${{ vars.REGISTRY_URL }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
         run: |
           APP_NAME="${{ github.event.client_payload.app_name }}"
           DOMAIN="${{ github.event.client_payload.domain }}"
@@ -109,6 +115,9 @@ jobs:
             set -e
             mkdir -p /opt/apps/$APP_NAME
             cd /opt/apps/$APP_NAME
+            
+            # Login to registry on host
+            echo "$REGISTRY_PASSWORD" | docker login $REGISTRY_URL -u "$REGISTRY_USERNAME" --password-stdin
             
             # Create docker-compose.yml
             cat > docker-compose.yml << 'COMPOSE'
