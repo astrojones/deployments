@@ -18,12 +18,47 @@ jobs:
       - name: Checkout deployments repo
         uses: actions/checkout@v4
       
-      - name: Checkout app repository
+      - name: Check if template repo
         if: github.event.action == 'deploy-prod' || github.event.action == 'deploy-preview'
+        id: check_template
+        run: |
+          IS_TEMPLATE=$(gh api repos/${{ github.event.client_payload.repository }} --jq '.is_template')
+          echo "is_template=$IS_TEMPLATE" >> $GITHUB_OUTPUT
+          echo "Template repo: $IS_TEMPLATE"
+        env:
+          GH_TOKEN: ${{ secrets.CHECKOUT_TOKEN }}
+      
+      - name: Create test repo from template
+        if: (github.event.action == 'deploy-prod' || github.event.action == 'deploy-preview') && steps.check_template.outputs.is_template == 'true'
+        id: create_test
+        run: |
+          TEST_REPO="validation-$(date +%s)"
+          echo "🧪 Creating test repo from template: $TEST_REPO"
+          
+          gh repo create astrojones/$TEST_REPO \
+            --template ${{ github.event.client_payload.repository }} \
+            --private
+          
+          echo "test_repo=astrojones/$TEST_REPO" >> $GITHUB_OUTPUT
+          echo "is_test_repo=true" >> $GITHUB_OUTPUT
+          echo "✅ Test repo created: $TEST_REPO"
+        env:
+          GH_TOKEN: ${{ secrets.CHECKOUT_TOKEN }}
+      
+      - name: Checkout app repository
+        if: (github.event.action == 'deploy-prod' || github.event.action == 'deploy-preview') && steps.check_template.outputs.is_template != 'true'
         uses: actions/checkout@v4
         with:
           repository: ${{ github.event.client_payload.repository }}
           ref: ${{ github.event.client_payload.ref }}
+          token: ${{ secrets.CHECKOUT_TOKEN }}
+          path: app-code
+      
+      - name: Checkout test repository
+        if: (github.event.action == 'deploy-prod' || github.event.action == 'deploy-preview') && steps.check_template.outputs.is_template == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.create_test.outputs.test_repo }}
           token: ${{ secrets.CHECKOUT_TOKEN }}
           path: app-code
       
@@ -252,5 +287,15 @@ jobs:
           git add registry.json
           git commit -m "Cleanup preview $APP_NAME" || true
           git push || true
+        env:
+          GH_TOKEN: ${{ secrets.CHECKOUT_TOKEN }}
+      
+      - name: Cleanup test repository
+        if: always() && steps.create_test.outputs.is_test_repo == 'true'
+        run: |
+          TEST_REPO="${{ steps.create_test.outputs.test_repo }}"
+          echo "🧹 Deleting test repo: $TEST_REPO"
+          gh repo delete $TEST_REPO --yes
+          echo "✅ Test repo deleted"
         env:
           GH_TOKEN: ${{ secrets.CHECKOUT_TOKEN }}
