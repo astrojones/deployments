@@ -1,0 +1,132 @@
+name: Deploy Service
+
+on:
+  repository_dispatch:
+    types: [deploy-prod, deploy-preview, cleanup-preview]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Setup SSH
+        env:
+          SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H ${{ vars.HOST_IP }} >> ~/.ssh/known_hosts
+      
+      - name: Deploy Production
+        if: github.event.action == 'deploy-prod'
+        env:
+          SSH_USER: ${{ secrets.SSH_USER }}
+          HOST_IP: ${{ vars.HOST_IP }}
+        run: |
+          APP_NAME="${{ github.event.client_payload.app_name }}"
+          DOMAIN="${{ github.event.client_payload.domain }}"
+          IMAGE="${{ github.event.client_payload.image }}"
+          PORT="${{ github.event.client_payload.port || '80' }}"
+          
+          echo "🚀 Deploying $APP_NAME to $DOMAIN"
+          
+          ssh $SSH_USER@$HOST_IP bash -s << EOF
+            set -e
+            mkdir -p /opt/apps/$APP_NAME
+            cd /opt/apps/$APP_NAME
+            
+            # Create docker-compose.yml
+            cat > docker-compose.yml << 'COMPOSE'
+          services:
+            app:
+              image: $IMAGE
+              restart: unless-stopped
+              networks:
+                - edge
+              labels:
+                - "traefik.enable=true"
+                - "traefik.http.routers.$APP_NAME.rule=Host(\\\`$DOMAIN\\\`)"
+                - "traefik.http.routers.$APP_NAME.entrypoints=websecure"
+                - "traefik.http.routers.$APP_NAME.tls.certresolver=letsencrypt"
+                - "traefik.http.services.$APP_NAME.loadbalancer.server.port=$PORT"
+
+          networks:
+            edge:
+              external: true
+          COMPOSE
+            
+            # Deploy
+            docker compose pull
+            docker compose up -d
+            
+            echo "✅ Deployed $DOMAIN"
+          EOF
+      
+      - name: Deploy Preview
+        if: github.event.action == 'deploy-preview'
+        env:
+          SSH_USER: ${{ secrets.SSH_USER }}
+          HOST_IP: ${{ vars.HOST_IP }}
+        run: |
+          APP_NAME="${{ github.event.client_payload.app_name }}"
+          DOMAIN="${{ github.event.client_payload.domain }}"
+          IMAGE="${{ github.event.client_payload.image }}"
+          PORT="${{ github.event.client_payload.port || '80' }}"
+          
+          echo "🚀 Deploying preview $APP_NAME to $DOMAIN"
+          
+          ssh $SSH_USER@$HOST_IP bash -s << EOF
+            set -e
+            mkdir -p /opt/apps/$APP_NAME
+            cd /opt/apps/$APP_NAME
+            
+            # Create docker-compose.yml
+            cat > docker-compose.yml << 'COMPOSE'
+          services:
+            app:
+              image: $IMAGE
+              restart: unless-stopped
+              networks:
+                - edge
+              labels:
+                - "traefik.enable=true"
+                - "traefik.http.routers.$APP_NAME.rule=Host(\\\`$DOMAIN\\\`)"
+                - "traefik.http.routers.$APP_NAME.entrypoints=websecure"
+                - "traefik.http.routers.$APP_NAME.tls.certresolver=letsencrypt"
+                - "traefik.http.services.$APP_NAME.loadbalancer.server.port=$PORT"
+
+          networks:
+            edge:
+              external: true
+          COMPOSE
+            
+            # Deploy
+            docker compose pull
+            docker compose up -d
+            
+            echo "✅ Deployed preview at $DOMAIN"
+          EOF
+      
+      - name: Cleanup Preview
+        if: github.event.action == 'cleanup-preview'
+        env:
+          SSH_USER: ${{ secrets.SSH_USER }}
+          HOST_IP: ${{ vars.HOST_IP }}
+        run: |
+          APP_NAME="${{ github.event.client_payload.app_name }}"
+          
+          echo "🧹 Cleaning up preview deployment: $APP_NAME"
+          
+          ssh $SSH_USER@$HOST_IP bash -s << EOF
+            set -e
+            if [ -d /opt/apps/$APP_NAME ]; then
+              cd /opt/apps/$APP_NAME
+              docker compose down -v || true
+              cd ..
+              rm -rf $APP_NAME
+              echo "✅ Removed preview deployment"
+            else
+              echo "⚠️  No deployment found to clean up"
+            fi
+          EOF
